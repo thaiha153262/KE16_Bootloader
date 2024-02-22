@@ -1,0 +1,7 @@
+{
+  "C_Cpp_Runner.msvcBatchPath": "",
+  "files.associations": {
+    "booloader.h": "c",
+    "stdint.h": "c"
+  }
+}

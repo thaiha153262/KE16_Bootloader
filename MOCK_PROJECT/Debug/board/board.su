@@ -1,0 +1,2 @@
+C:\Users\84396\Documents\MCUXpressoIDE_11.8.1_1197\workspace\frdmke16z34_lpuart_interrupt\drivers/fsl_clock.h:623:20:CLOCK_SetIpSrc	24	static
+../board/board.c:24:6:BOARD_InitDebugConsole	16	static

@@ -1,0 +1,2 @@
+../source/bootloader.c:5:13:check_signal	8	static
+../source/bootloader.c:26:17:bootloader	24	static

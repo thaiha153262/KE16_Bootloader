@@ -1,0 +1,7 @@
+../source/flash.c:2:6:FTFA_Init	8	static
+../source/flash.c:7:6:FTFA_DeInit	8	static
+../source/flash.c:12:6:FTFA_ProgramFlashAddr	16	static
+../source/flash.c:22:6:FTFA_ProgramLongWord	16	static
+../source/flash.c:50:6:erase_sector	24	static
+../source/flash.c:64:6:writeToFlash	32	static
+../source/flash.c:78:6:FTFA_EraseSector	8	static

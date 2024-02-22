@@ -1,0 +1,11 @@
+C:\Users\84396\Documents\MCUXpressoIDE_11.8.1_1197\workspace\frdmke16z34_lpuart_interrupt\CMSIS/core_cm0plus.h:741:22:__NVIC_EnableIRQ	16	static
+C:\Users\84396\Documents\MCUXpressoIDE_11.8.1_1197\workspace\frdmke16z34_lpuart_interrupt\CMSIS/core_cm0plus.h:779:22:__NVIC_DisableIRQ	16	static
+../source/uart.c:31:9:charToHex	16	static
+../source/uart.c:50:6:SEND_RESPONE	16	static
+../source/uart.c:55:6:UART_SendStr	24	static
+../source/uart.c:73:6:extractAddressAndSize1	16	static
+../source/uart.c:82:6:extractData	16	static
+../source/uart.c:90:6:extractAddressAndSize	16	static
+../source/uart.c:98:6:LPUART0_IRQHandler	16	static
+../source/uart.c:368:6:UART_Deinit	8	static
+../source/uart.c:390:6:UART_Init	8	static

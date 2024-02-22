@@ -1,0 +1,689 @@
+/*
+ * Copyright (c) 2015, Freescale Semiconductor, Inc.
+ * Copyright 2016-2019 NXP
+ * All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#include "pin_mux.h"
+#include "board.h"
+#include "fsl_lpuart.h"
+#include "fsl_debug_console.h"
+#include "flash.h"
+#include "booloader.h"
+#include <math.h>
+
+#include "fsl_common.h"
+/*******************************************************************************
+ * Definitions
+ ******************************************************************************/
+#define DEMO_LPUART LPUART0
+#define DEMO_LPUART_CLKSRC kCLOCK_ScgSysOscClk
+#define DEMO_LPUART_CLK_FREQ CLOCK_GetFreq(kCLOCK_ScgSysOscClk)
+#define DEMO_LPUART_IRQn LPUART0_IRQn
+#define DEMO_LPUART_IRQHandler LPUART0_IRQHandler
+#define START_SIGNAL_LENGTH 5
+#define END_SIGNAL_LENGTH 3
+#define USER_APPLICATION_BASE_ADDRESS 0x8800
+
+#define NEW_FIRMWARE_ADDRESS 0x8800U
+#define OLD_FIRMWARE_ADDRESS 0x4400U
+
+/*! @brief Ring buffer size (Unit: Byte). */
+#define DEMO_RING_BUFFER_SIZE 16
+#define BUFFER_SIZE 128
+
+typedef void (*pFunction)(void);
+#define MAIN_APP_ADDRESS 0x8800U
+
+/*******************************************************************************
+ * Prototypes
+ ******************************************************************************/
+
+/*******************************************************************************
+ * Variables
+ ******************************************************************************/
+
+uint8_t g_tipString[] =
+    "Lpuart functional API interrupt example\r\nBoard receives characters then sends them out\r\nNow please input:\r\n";
+
+uint8_t demoRingBuffer[DEMO_RING_BUFFER_SIZE];
+volatile uint16_t txIndex; /* Index of the data to send out. */
+volatile uint16_t rxIndex; /* Index of the memory to save new arrived data. */
+static void BootJump(uint32_t Address);
+/*******************************************************************************
+ * Code
+ ******************************************************************************/
+
+typedef enum
+{
+    SIGNAL,
+    DEFAULT,
+    TYPE,
+    BYTE_COUNT,
+    ADDRESS,
+    DATA,
+    MESSAGE,
+    GET_DATA_FROM_SIGNAL,
+    END_MESSAGE,
+
+} RecordState;
+
+typedef enum
+{
+    Wait_signal,
+    Check_signal,
+    Get_srec,
+    Finish_Recive_Write_data
+} BootloaderState;
+
+typedef enum
+{
+    NOT_ERROR,
+    DETECT_Signal,
+    New_FIRm_ERROR,
+} SignalError;
+
+SignalError SignalErrors;
+
+typedef struct
+{
+
+    uint8_t type;
+    uint8_t byteCount;
+    uint32_t address;
+    uint8_t data[8];
+    uint8_t checksum;
+    uint8_t numberOfAddress;
+    uint8_t datalength;
+    RecordState state;
+} SRec;
+
+BootloaderState bootState;
+/*******************************************************************************
+ * Variables
+ ******************************************************************************/
+// volatile uint32_t rxIndex = 0;
+SRec currentRecord;
+uint32_t dataIndex = 0;
+volatile uint32_t index_data = 0;
+uint8_t databack;
+
+uint8_t complete;
+uint8_t complete2;
+volatile uint32_t new_firmware_error = 0;
+volatile uint16_t txIndex;     /* Index of the data to send out. */
+volatile uint16_t rxIndex = 0; /* Index of the memory to save new arrived data. */
+
+/*******************************************************************************
+ * Code
+ ******************************************************************************/
+volatile uint32_t addressValue = 0;
+volatile uint8_t addressIndex = 0;
+
+char startSignal[START_SIGNAL_LENGTH] = {0};
+volatile uint8_t startSignalIndex = 0;
+char endSignal[END_SIGNAL_LENGTH] = {0};
+volatile uint8_t endSignalIndex = 0;
+uint8_t receivingData = 'f';
+
+void erase_sector(uint16_t start_addr, uint16_t num_sector);
+void SEND_RESPONE(uint8_t *message);
+uint8_t charToHex(uint8_t ch)
+{
+    if (ch >= '0' && ch <= '9')
+    {
+        return ch - '0';
+    }
+    else if (ch >= 'A' && ch <= 'F')
+    {
+        return ch - 'A' + 10;
+    }
+    else if (ch >= 'a' && ch <= 'f')
+    {
+        return ch - 'a' + 10;
+    }
+    else
+    {
+        return 0xFF;
+    }
+}
+uint8_t tempData[8] = {0};
+uint8_t tempData2[5] = {0};
+uint8_t receivedByte1;
+uint8_t receivedByte;
+uint32_t dataring;
+uint8_t count_message;
+uint8_t messageStart[4] = {'E', 'G', 'I', 'N'};
+uint8_t messageEnd[4] = {'N', 'D'};
+uint8_t messageError[4] = {'R', 'R', 'O', 'R'};
+uint8_t index_message_Error;
+uint8_t message[10];
+uint8_t data_message;
+uint32_t total_line;
+volatile uint32_t address = 0;
+volatile uint8_t size;
+volatile uint32_t count_write;
+volatile uint32_t data_u32;
+
+//uint32_t *data_app=(uint32_t*) 0x8800U;
+//uint32_t *data_appbackup = ((uint32_t *)0x4400U);
+uint32_t data_app=0x8800U;
+uint32_t data_appbackup =0x4400U;
+
+void extractAddressAndSize()
+{
+
+    for (int i = 0; i < data_message - 1; i++)
+    {
+
+        address += tempData2[i] << ((data_message - 1 - i - 1) * 4);
+    }
+
+    size = tempData2[data_message - 1];
+}
+void extractData()
+{
+
+    for (int i = 0; i < index_data; i++)
+    {
+
+        data_u32 += currentRecord.data[i] << ((index_data - i - 1) * 4);
+    }
+}
+void extractAddressAndSize1()
+{
+
+    for (int i = 0; i < currentRecord.datalength - 1; i++)
+    {
+
+        address += tempData[i] << ((currentRecord.datalength - 1 - i - 1) * 4);
+    }
+
+    size = tempData2[data_message - 1];
+}
+//void writeToFlash()
+//{
+//    uint16_t address = currentRecord.address + (count_write * 4);
+//    uint32_t *ptr = (uint32_t *)&data_u32;
+//    dataring = *ptr;
+//    FTFA_ProgramFlashAddr(&address);
+//
+//    FTFA_ProgramLongWord(ptr);
+//    count_write++;
+//}
+uint8_t count_byte = 0;
+uint8_t flag_interrupt = 0;
+void LPUART0_IRQHandler(void)
+{
+    uint8_t data;
+    if (LPUART0->STAT & LPUART_STAT_RDRF_MASK)
+    {
+        receivedByte1 = (uint8_t)(LPUART0->DATA);
+        receivedByte = charToHex(receivedByte1);
+        databack = receivedByte1;
+        rxIndex++;
+
+        if (rxIndex > 2 && rxIndex % 2 != 0 && receivedByte != 255)
+        {
+            currentRecord.checksum += receivedByte << 4;
+        }
+        else if (rxIndex > 2 && rxIndex % 2 == 0 && receivedByte != 255)
+        {
+            currentRecord.checksum += receivedByte;
+        }
+        if (receivedByte1 == 'Z')
+        {
+            flag_interrupt = 1;
+            currentRecord.state = SIGNAL;
+            bootState = Finish_Recive_Write_data;
+        }
+        switch (SignalErrors)
+        {
+        case NOT_ERROR:
+            if (receivedByte1 == 'E')
+            {
+                SignalErrors = DETECT_Signal;
+            }
+        case DETECT_Signal:
+            if (receivedByte1 == messageError[index_message_Error])
+            {
+                index_message_Error++;
+                if (index_message_Error == 4)
+                    SignalErrors = New_FIRm_ERROR;
+            }
+            break;
+        }
+    }
+
+    switch (currentRecord.state)
+    {
+    case SIGNAL:
+        if (receivedByte1 == 'B')
+        {
+            currentRecord.state = MESSAGE;
+        }
+        //        if(bootState == Get_srec){
+        //        	currentRecord.state = DEFAULT;
+        //        }
+        break;
+    case DEFAULT:
+        if (receivedByte1 == 'S')
+        {
+            currentRecord.state = TYPE;
+            rxIndex = 1;
+        }
+
+        break;
+
+    case MESSAGE:
+        if (receivedByte1 == messageStart[startSignalIndex])
+        {
+            startSignalIndex++;
+            if (startSignalIndex == 4)
+            {
+                receivingData = 'y';
+                currentRecord.state = GET_DATA_FROM_SIGNAL;
+            }
+        }
+        else
+        {
+            currentRecord.state = DEFAULT;
+        }
+        break;
+    case GET_DATA_FROM_SIGNAL:
+        if (receivedByte1 == 'E')
+        {
+            memcpy(tempData2, message, sizeof(tempData2));
+            extractAddressAndSize();
+            currentRecord.state = SIGNAL;
+            bootState = Check_signal;
+            //                check_signal();
+        }
+        else
+        {
+            message[data_message] = receivedByte;
+            data_message++;
+        }
+        break;
+    case TYPE:
+        currentRecord.type = receivedByte;
+        if (receivedByte != 1 || receivedByte != 2 || receivedByte != 3)
+        {
+            currentRecord.numberOfAddress = (currentRecord.type + 1) * 2;
+        }
+        else
+        {
+            currentRecord.numberOfAddress = 4;
+        }
+        currentRecord.state = BYTE_COUNT;
+        break;
+
+    case BYTE_COUNT:
+
+        if (count_byte == 0)
+        {
+            currentRecord.byteCount = (receivedByte) * 16;
+            count_byte++;
+        }
+        else
+        {
+            currentRecord.byteCount += (receivedByte);
+            currentRecord.state = ADDRESS;
+            count_byte = 0;
+        }
+        break;
+
+    case ADDRESS:
+        addressValue += receivedByte * pow(16, (currentRecord.numberOfAddress - 1 - addressIndex));
+        addressIndex++;
+        if (addressIndex >= currentRecord.numberOfAddress)
+        {
+            currentRecord.address = addressValue;
+            addressValue = 0;
+            addressIndex = 0;
+            currentRecord.state = DATA;
+        }
+
+        break;
+    case DATA:
+        if (receivedByte != 255 && receivedByte1 != '\r')
+        {
+            index_data++;
+
+            if (index_data >= 8)
+            {
+                currentRecord.data[index_data - 1] = (receivedByte);
+                memcpy(tempData, currentRecord.data, sizeof(currentRecord.data));
+                extractData();
+                dataring = data_u32;
+                writeToFlash(currentRecord.address,data_u32,count_write);
+                count_write++;
+                memset(currentRecord.data, 0, sizeof(currentRecord.data));
+                //                                        count_write = 0;
+                data_u32 = 0;
+                index_data = 0;
+                currentRecord.datalength = 0;
+            }
+            else
+            {
+                currentRecord.data[index_data - 1] = (receivedByte);
+                currentRecord.datalength = index_data;
+            }
+        }
+        else
+        {
+            memcpy(tempData, currentRecord.data, sizeof(currentRecord.data));
+            extractData();
+            if (index_data > 2)
+            {
+                index_data -= 2;
+                writeToFlash(currentRecord.address,data_u32,count_write);
+                count_write++;
+            }
+            else
+            {
+                index_data = 0;
+            }
+            dataring = data_u32;
+            memset(currentRecord.data, 0, sizeof(currentRecord.data));
+            count_write = 0;
+            index_data = 0;
+            data_u32 = 0;
+            currentRecord.datalength -= 2;
+            currentRecord.state = DEFAULT;
+            currentRecord.address = 0;
+            currentRecord.checksum = 0;
+            currentRecord.byteCount = 0;
+            currentRecord.numberOfAddress = 0;
+            //                currentRecord.
+            rxIndex = 0;
+        }
+        break;
+    default:
+        break;
+    }
+}
+// SDK_ISR_EXIT_BARRIER;
+// }
+volatile uint32_t data_flash = 0;
+
+void UART_Init()
+{
+    // Port configuration
+    PCC->CLKCFG[PCC_PORTB_INDEX] |= PCC_CLKCFG_CGC(1U);
+
+    PORTB->PCR[1] = (PORTB->PCR[1] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(2U);
+    PORTB->PCR[1] |= PORT_PCR_PE(1U);
+    PORTB->PCR[1] |= PORT_PCR_PS(1U);
+
+    PORTB->PCR[0] = (PORTB->PCR[0] & ~PORT_PCR_MUX_MASK) | PORT_PCR_MUX(2U);
+    PORTB->PCR[0] |= PORT_PCR_PE(1U);
+    PORTB->PCR[0] |= PORT_PCR_PS(1U);
+
+    // Clock configuration
+    SCG->SIRCCFG |= SCG_SIRCCFG_RANGE(1U);
+    SCG->SIRCDIV = (SCG->SIRCDIV & ~SCG_SIRCDIV_SIRCDIV2_MASK) | SCG_SIRCDIV_SIRCDIV2(3U);
+
+    PCC->CLKCFG[PCC_LPUART0_INDEX] = (PCC->CLKCFG[PCC_LPUART0_INDEX] & ~PCC_CLKCFG_PCS_MASK) | PCC_CLKCFG_PCS(2U);
+    PCC->CLKCFG[PCC_LPUART0_INDEX] |= PCC_CLKCFG_CGC(1U);
+
+    // Disable UART
+    LPUART0->CTRL &= ~LPUART_CTRL_TE_MASK;
+    LPUART0->CTRL &= ~LPUART_CTRL_RE_MASK;
+
+    // Baud rate configuration
+    LPUART0->BAUD = (LPUART0->BAUD & ~LPUART_BAUD_SBR_MASK) | LPUART_BAUD_SBR(52U);
+    LPUART0->BAUD |= LPUART_BAUD_BOTHEDGE(1U);
+    LPUART0->BAUD = (LPUART0->BAUD & ~LPUART_BAUD_OSR_MASK) | LPUART_BAUD_OSR(3U);
+
+    // Frame configuration
+    LPUART0->BAUD &= ~LPUART_BAUD_M10_MASK;
+    LPUART0->CTRL &= ~LPUART_CTRL_M7_MASK;
+    LPUART0->CTRL &= ~LPUART_CTRL_M_MASK;
+    LPUART0->CTRL &= ~LPUART_CTRL_PE_MASK;
+    LPUART0->BAUD &= ~LPUART_BAUD_SBNS_MASK;
+    LPUART0->STAT &= ~LPUART_STAT_MSBF_MASK;
+
+    LPUART0->CTRL |= LPUART_CTRL_RIE_MASK;
+
+    LPUART0->CTRL |= LPUART_CTRL_TE_MASK;
+    LPUART0->CTRL |= LPUART_CTRL_RE_MASK;
+
+    LPUART0->CTRL |= LPUART_CTRL_RIE_MASK;
+
+    LPUART0->CTRL |= LPUART_CTRL_TE_MASK;
+    LPUART0->CTRL |= LPUART_CTRL_RE_MASK;
+
+    NVIC_EnableIRQ(LPUART0_IRQn);
+}
+void UART_SendStr(uint8_t *str, uint8_t len)
+{
+    // Enable UART transmiter
+    LPUART0->CTRL |= LPUART_CTRL_TE(1U);
+
+    uint8_t i;
+    for (i = 0; i < len; i++)
+    {
+        // Wait until empty buffer
+        while (0U == (LPUART0->STAT & LPUART_STAT_TDRE_MASK))
+            ;
+
+        // Write to data buffer
+        LPUART0->DATA = str[i];
+    }
+    // Disable UART transmiter
+    LPUART0->CTRL &= ~LPUART_CTRL_TE_MASK;
+}
+void check_signal()
+{
+    if (address < 0x1000)
+    {
+        SEND_RESPONE("address must greater than 0x1000.\n");
+        bootState = Wait_signal;
+    }
+    else if (address + size * 0x400 > 0x10000)
+    {
+        SEND_RESPONE("Size of must be less than 0x10000.\n");
+        bootState = Wait_signal;
+    }
+    else
+    {
+        SEND_RESPONE("Address and data are OK, you can send data ");
+        bootState = Get_srec;
+    }
+}
+uint32_t timer_count = 0;
+uint8_t exit_loop = 0;
+void bootloader()
+{
+    bootState = Wait_signal;
+    SEND_RESPONE("BOOTLOADER");
+
+    SEND_RESPONE("WAITING SIGNAL");
+    exit_loop = 0;
+
+    while (exit_loop != 1 && bootState != Check_signal && SignalErrors != New_FIRm_ERROR)
+    {
+        if (timer_count >= 10000000)
+        {
+            bootState = Wait_signal;
+            exit_loop = 1;
+        }
+        else
+        {
+            timer_count++;
+        }
+    }
+        if (bootState == Check_signal)
+        {
+            SEND_RESPONE("CHECK SIGNAL don't send data");
+            check_signal();
+            if(address != 0x4400U){
+            data_app = address;
+            }
+        }
+        if (bootState == Get_srec)
+        {
+            erase_sector(address, size);
+            currentRecord.state = DEFAULT;
+            SEND_RESPONE("YOU can send data ");
+
+            SEND_RESPONE("WAITING DATA");
+            exit_loop = 0;
+            while (exit_loop != 1 && bootState != Finish_Recive_Write_data)
+            {
+                if (timer_count >= 100000000)
+                {
+                    bootState = Wait_signal;
+                    currentRecord.state = SIGNAL;
+                    exit_loop = 1;
+                }
+                else
+                {
+                    timer_count++;
+                }
+            }
+            if(bootState == Finish_Recive_Write_data){
+            	SignalErrors = NOT_ERROR;
+//            	uint32_t error=0;
+//            	        SEND_RESPONE("PLEASE RESET IT WILL RUN OLD FIRMWARE");
+            	        uint16_t sector_addr = 0x3000;
+            	        FTFA_ProgramFlashAddr(&sector_addr);
+            	        FTFA_EraseSector();
+            }
+        }
+        if (SignalErrors == New_FIRm_ERROR)
+        {
+            new_firmware_error = 1;
+            uint32_t error = 1;
+            SEND_RESPONE("PLEASE RESET IT WILL RUN OLD FIRMWARE");
+            uint16_t sector_addr = 0x3000;
+            FTFA_ProgramFlashAddr(&sector_addr);
+            uint32_t *ptr = &error;
+            FTFA_ProgramLongWord(ptr);
+
+        }
+
+    SEND_RESPONE("exit");
+}
+void SEND_RESPONE(uint8_t *message)
+{
+    UART_SendStr((uint8_t *)message, strlen(message));
+}
+
+
+
+int main(void)
+{
+
+    FTFA_Init();
+
+
+    UART_Init();
+
+    PCC->CLKCFG[PCC_PORTD_INDEX] |= 1 << 30U;
+
+    PORTD->PCR[2] |= (((1) << 8U) & 0xFFFF);
+    PORTD->PCR[2] |= (1U << 1) | 1;
+    GPIOD->PDDR &= ~(1 << 2U);
+
+    uint32_t appAddress[2] = {(uint32_t)USER_APPLICATION_BASE_ADDRESS, *((uint32_t *)(USER_APPLICATION_BASE_ADDRESS + 4))};
+
+    uint32_t appAddressBackup[2] = {(uint32_t)OLD_FIRMWARE_ADDRESS, *((uint32_t *)(OLD_FIRMWARE_ADDRESS + 4))};
+
+
+//    erase_sector(0x8800, 3);
+    uint32_t* sector_addr = 0x3000;
+//    FTFA_ProgramFlashAddr(&sector_addr);
+//    FTFA_EraseSector();
+
+
+    /* modify if want to press GPIOD->PDIR & (1 << 2U)) == 100*/
+    if (1)
+    {
+        bootloader();
+    }
+    if (*sector_addr == 0x1000000)
+    {
+        BootJump(data_appbackup);
+    }
+    else
+    {
+        if (*(uint32_t *)data_app == 0xFFFFFFFF && *(uint32_t *)data_appbackup != 0xFFFFFFFF)
+        {
+            BootJump(data_appbackup);
+        }
+        else if (*(uint32_t *)data_app != 0xFFFFFFFF)
+        {
+            BootJump(data_app);
+        }
+        else
+        {
+            SEND_RESPONE("NO APP , NO BACKUP, PLEASE BACK TO BOOTLOADER");
+            //                BootJump(appAddress);
+        }
+    }
+
+    //    while (1)
+    //    {
+    ////        if (flag_interrupt == 1)
+    ////        {
+    ////
+    ////            BootJump(appAddress);
+    ////        }
+    //
+    //    }
+}
+
+static void BootJump(uint32_t Address)
+{
+
+    if (CONTROL_nPRIV_Msk & __get_CONTROL())
+    {
+        __set_CONTROL(__get_CONTROL() & ~CONTROL_nPRIV_Msk);
+    }
+
+    NVIC->ICER[0] = 0xFFFFFFFF;
+    NVIC->ICER[1] = 0xFFFFFFFF;
+    NVIC->ICER[2] = 0xFFFFFFFF;
+    NVIC->ICER[3] = 0xFFFFFFFF;
+    NVIC->ICER[4] = 0xFFFFFFFF;
+    NVIC->ICER[5] = 0xFFFFFFFF;
+    NVIC->ICER[6] = 0xFFFFFFFF;
+    NVIC->ICER[7] = 0xFFFFFFFF;
+
+    NVIC->ICPR[0] = 0xFFFFFFFF;
+    NVIC->ICPR[1] = 0xFFFFFFFF;
+    NVIC->ICPR[2] = 0xFFFFFFFF;
+    NVIC->ICPR[3] = 0xFFFFFFFF;
+    NVIC->ICPR[4] = 0xFFFFFFFF;
+    NVIC->ICPR[5] = 0xFFFFFFFF;
+    NVIC->ICPR[6] = 0xFFFFFFFF;
+    NVIC->ICPR[7] = 0xFFFFFFFF;
+
+    SysTick->CTRL = 0;
+    SCB->ICSR |= SCB_ICSR_PENDSTCLR_Msk;
+
+    SCB->CCR &= ~(SCB_CCR_UNALIGN_TRP_Msk |
+                  SCB_CCR_STKALIGN_Msk);
+
+    if (CONTROL_SPSEL_Msk & __get_CONTROL())
+    {
+        __set_MSP(__get_PSP());
+        __set_CONTROL(__get_CONTROL() & ~CONTROL_SPSEL_Msk);
+    }
+
+    SCB->VTOR = (uint32_t)Address;
+
+    __set_MSP(*(uint32_t *)Address);
+    uint32_t resetAddress_u32 = 0;
+    pFunction jump_to_address;
+    resetAddress_u32 = *(uint32_t *)(Address + 4);
+    jump_to_address = (pFunction)(resetAddress_u32);
+    jump_to_address();
+}
+/***************************************************************************************************
+ *End of file
+ **************************************************************************************************/

@@ -1,0 +1,4 @@
+C:\Users\84396\Documents\MCUXpressoIDE_11.8.1_1197\workspace\frdmke16z34_lpuart_interrupt\drivers/fsl_clock.h:594:20:CLOCK_EnableClock	16	static
+C:\Users\84396\Documents\MCUXpressoIDE_11.8.1_1197\workspace\frdmke16z34_lpuart_interrupt\drivers/fsl_port.h:458:20:PORT_SetPinMux	24	static
+../board/pin_mux.c:37:6:BOARD_InitBootPins	8	static
+../board/pin_mux.c:60:6:BOARD_InitPins	8	static

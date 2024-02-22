@@ -1,0 +1,3 @@
+C:\Users\84396\Documents\MCUXpressoIDE_11.8.1_1197\workspace\frdmke16z34_lpuart_interrupt\CMSIS/core_cm0plus.h:741:22:__NVIC_EnableIRQ	16	static
+../source/Lpit.c:2:6:LPIT0_IRQHandler	8	static
+../source/Lpit.c:9:6:LPIT_Init	8	static
